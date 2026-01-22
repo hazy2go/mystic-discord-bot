@@ -17,6 +17,10 @@ let riddleCorrectUsers = new Set(); // Using a Set to avoid duplicates
 // Individual user progress tracking for challenges
 let userChallengeProgress = new Map(); // Map<userId, {submitted: Date[], attempts: number}>
 
+// Track users who have been reminded in each forum thread
+// Map<threadId, Set<userId>>
+let forumThreadReminders = new Map();
+
 
 // Social media post queue and timing variables for both systems (Twitter & Instagram)
 let tweetQueue = [];
@@ -113,6 +117,51 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async message => {
+    // Auto-reply in forum threads for raid proof submissions
+    if (message.channel.isThread() && message.channel.parent) {
+        const parentChannelId = message.channel.parent.id;
+
+        // Check if this thread is in one of the raid forum channels
+        const isRaidForum = [FORUM_CHANNEL_ID, FORUM_CHANNEL_ID_2, FORUM_CHANNEL_ID_3].includes(parentChannelId);
+
+        if (isRaidForum && !message.author.bot) {
+            try {
+                // Check if user has Community Team role
+                const member = await message.guild.members.fetch(message.author.id);
+                const hasCommunityTeamRole = member.roles.cache.some(role => role.name === 'Community Team');
+
+                if (!hasCommunityTeamRole) {
+                    // Initialize Set for this thread if it doesn't exist
+                    if (!forumThreadReminders.has(message.channel.id)) {
+                        forumThreadReminders.set(message.channel.id, new Set());
+                    }
+
+                    const threadReminders = forumThreadReminders.get(message.channel.id);
+
+                    // Only reply if we haven't reminded this user in this thread yet
+                    if (!threadReminders.has(message.author.id)) {
+                        // Determine language based on parent forum channel
+                        let reminderMessage;
+                        if (parentChannelId === FORUM_CHANNEL_ID_3) {
+                            // Portuguese
+                            reminderMessage = `<@${message.author.id}> Lembre-se: você precisa **seguir, curtir E compartilhar com um amigo** no post para garantir sua recompensa! Não esqueça de compartilhar! 🔗`;
+                        } else {
+                            // English
+                            reminderMessage = `<@${message.author.id}> Remember: you need to **follow, like AND share to a friend** on the post to claim your reward! Don't forget to share! 🔗`;
+                        }
+
+                        await message.channel.send(reminderMessage);
+
+                        // Mark this user as reminded in this thread
+                        threadReminders.add(message.author.id);
+                    }
+                }
+            } catch (error) {
+                console.error('Error sending raid reminder:', error);
+            }
+        }
+    }
+
     // Helper function to process social media link detection
     const handleSocialMediaLink = (channelId, systemConfig, queueData, systemName) => {
         if (message.channel.id !== channelId) return false;
@@ -198,12 +247,12 @@ async function processTweet(tweetLink, forumChannelId, notifyChannelId, raiderRo
       
       if (language === 'pt') {
         threadName = 'Canal de Prova de Raid';
-        threadMessage = `Por favor, mostre a prova abaixo e ganhe 2 Caixas de Tesouro Normais!\n${tweetLink}`;
-        notifyMessage = `Uma nova maneira de ganhar Tesouros acaba de ser lançada! Vá até ${'{thread_url}'} e participe da ação! <@&${raiderRoleId}>`;
+        threadMessage = `Manda um print mostrando que você seguiu, curtiu e compartilhou com um amigo pra pegar suas 2 Caixas de Loot Médias!\n${tweetLink}`;
+        notifyMessage = `Ganhe 2 Caixas de Loot Médias!** Acesse ${'{thread_url}'}, compartilhe com um amigo, curta e siga pra pegar sua recompensa. <@&${raiderRoleId}>`;
       } else {
         threadName = 'Raid Proof Channel';
-        threadMessage = `Please show proof of following,liking and commenting below to earn 2 Medium Loot Boxes!\n${tweetLink}`;
-        notifyMessage = `A new way to earn Loot just dropped! Head over to ${'{thread_url}'}, comment, like and follow to earn your reward! <@&${raiderRoleId}>`;
+        threadMessage = `Drop a screenshot showing you've followed, liked, and shared to a friend to claim your 2 Medium Loot Boxes!\n${tweetLink}`;
+        notifyMessage = `**Earn 2 Medium Loot Boxes!** Visit ${'{thread_url}'}, share to a friend, like, and follow to claim your reward. <@&${raiderRoleId}>`;
       }
       
       const thread = await forumChannel.threads.create({
