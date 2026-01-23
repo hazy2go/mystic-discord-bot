@@ -162,6 +162,24 @@ client.on('messageCreate', async message => {
         }
     }
 
+    // Helper function to extract Instagram username from embed
+    const extractInstagramUsername = (msg) => {
+        // Try to get username from embeds
+        if (msg.embeds && msg.embeds.length > 0) {
+            for (const embed of msg.embeds) {
+                // Check author name (e.g., "reignoftitans (@reignoftitans)")
+                if (embed.author && embed.author.name) {
+                    // Extract username from format like "username (@username)" or just "username"
+                    const match = embed.author.name.match(/@(\w+)/);
+                    if (match) return match[1];
+                    // If no @ format, use the author name directly
+                    return embed.author.name.split(' ')[0];
+                }
+            }
+        }
+        return 'instagram';
+    };
+
     // Helper function to process social media link detection
     const handleSocialMediaLink = (channelId, systemConfig, queueData, systemName) => {
         if (message.channel.id !== channelId) return false;
@@ -183,15 +201,21 @@ client.on('messageCreate', async message => {
             socialLink = socialLink.slice(0, -1);
         }
 
+        // Extract Instagram username from the embed
+        const accountName = extractInstagramUsername(message);
+
         const currentTime = Date.now();
         const oneHour = 60 * 60 * 1000;
 
+        // Create post data object with link and account name
+        const postData = { link: socialLink, accountName: accountName };
+
         if (currentTime - queueData.lastTime >= oneHour && queueData.queue.length === 0) {
-            processTweet(socialLink, queueData.forumId, queueData.notifyId, queueData.roleId, queueData.language);
+            processTweet(postData.link, queueData.forumId, queueData.notifyId, queueData.roleId, queueData.language, postData.accountName);
             queueData.lastTime = currentTime;
             console.log(`Post processed immediately (${systemName})`);
         } else {
-            queueData.queue.push(socialLink);
+            queueData.queue.push(postData);
             console.log(`Post added to queue (${systemName}). Position: ${queueData.queue.length}`);
 
             if (!queueData.processing) {
@@ -236,25 +260,32 @@ client.on('messageCreate', async message => {
     }, 'System 3')) return;
 
 // Function to process a social media post (Twitter or Instagram)
-async function processTweet(tweetLink, forumChannelId, notifyChannelId, raiderRoleId, language = 'en') {
+async function processTweet(tweetLink, forumChannelId, notifyChannelId, raiderRoleId, language = 'en', accountName = 'instagram') {
   try {
     const forumChannel = await client.channels.fetch(forumChannelId);
     const notify = await client.channels.fetch(notifyChannelId);
-    
+
     if (forumChannel.type === ChannelType.GuildForum) {
+      // Generate date string in MM/DD format
+      const now = new Date();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const dateStr = `${month}/${day}`;
+
       // Set messages based on language
       let threadName, threadMessage, notifyMessage;
-      
+
+      // Thread name with date and account name
+      threadName = `${dateStr} ${accountName}`;
+
       if (language === 'pt') {
-        threadName = 'Canal de Prova de Raid';
         threadMessage = `Manda um print mostrando que você seguiu, curtiu e compartilhou com um amigo pra pegar suas 2 Caixas de Loot Médias!\n${tweetLink}`;
         notifyMessage = `Ganhe 2 Caixas de Loot Médias!** Acesse ${'{thread_url}'}, compartilhe com um amigo, curta e siga pra pegar sua recompensa. <@&${raiderRoleId}>`;
       } else {
-        threadName = 'Raid Proof Channel';
         threadMessage = `Drop a screenshot showing you've followed, liked, and shared to a friend to claim your 2 Medium Loot Boxes!\n${tweetLink}`;
         notifyMessage = `**Earn 2 Medium Loot Boxes!** Visit ${'{thread_url}'}, share to a friend, like, and follow to claim your reward. <@&${raiderRoleId}>`;
       }
-      
+
       const thread = await forumChannel.threads.create({
         name: threadName,
         autoArchiveDuration: 1440, // 1 day
@@ -262,9 +293,9 @@ async function processTweet(tweetLink, forumChannelId, notifyChannelId, raiderRo
           content: threadMessage
         }
       });
-      
+
       notify.send(notifyMessage.replace('{thread_url}', thread.url));
-      console.log(`Social post processed: ${tweetLink} (${language})`);
+      console.log(`Social post processed: ${tweetLink} (${language}) - Thread: ${threadName}`);
     } else {
       console.error('The specified channel is not a forum channel.');
     }
@@ -289,9 +320,13 @@ function createQueueProcessor(queueRef, processingRef, lastTimeRef, forumId, not
         const lastTime = lastTimeRef.get();
 
         if (currentTime - lastTime >= oneHour) {
-            const tweetToProcess = queue.shift();
+            const postData = queue.shift();
 
-            await processTweet(tweetToProcess, forumId, notifyId, roleId, language);
+            // Handle both old format (string) and new format (object with link and accountName)
+            const link = typeof postData === 'string' ? postData : postData.link;
+            const accountName = typeof postData === 'string' ? 'instagram' : postData.accountName;
+
+            await processTweet(link, forumId, notifyId, roleId, language, accountName);
             lastTimeRef.set(currentTime);
 
             console.log(`Queue processed (${systemName}). Remaining posts in queue: ${queue.length}`);
