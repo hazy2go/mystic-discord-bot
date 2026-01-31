@@ -94,6 +94,10 @@ let riddleReminderActive = false;
 let riddleReminderChannelId = process.env.RIDDLE_REMINDER_CHANNEL_ID || process.env.NOTIFY_CHANNEL_ID;
 let riddleReminderJob = null;
 
+// Raid reminder cron jobs
+let raidReminderMorningJob = null;
+let raidReminderEveningJob = null;
+
 // CSV writer to record username and message
 let csvWriter = createCsvWriter({
     path: csvFilePath,
@@ -112,9 +116,137 @@ let embedImageUrl = '';
 const prefix = '!';
 
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log('Mystic is online!');
+
+    // Schedule raid reminder cron jobs (6am and 6pm JST)
+    // JST is UTC+9, so 6am JST = 21:00 UTC (prev day), 6pm JST = 09:00 UTC
+    raidReminderMorningJob = schedule.scheduleJob('0 21 * * *', async function() {
+        console.log('Running 6am JST raid reminder...');
+        await sendRaidReminders('all');
+    });
+
+    raidReminderEveningJob = schedule.scheduleJob('0 9 * * *', async function() {
+        console.log('Running 6pm JST raid reminder...');
+        await sendRaidReminders('all');
+    });
+
+    console.log('Raid reminder cron jobs scheduled (6am & 6pm JST)');
 });
+
+/**
+ * Fetches open raid threads from a forum channel
+ * @param {string} forumChannelId - The forum channel ID to check
+ * @returns {Promise<Array>} - Array of open thread objects with name, url, and createdAt
+ */
+async function getOpenRaids(forumChannelId) {
+    try {
+        const forumChannel = await client.channels.fetch(forumChannelId);
+        if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+            console.error(`Channel ${forumChannelId} is not a forum channel`);
+            return [];
+        }
+
+        // Fetch active (non-archived) threads
+        const activeThreads = await forumChannel.threads.fetchActive();
+
+        // Convert to array and sort by creation date (newest first)
+        const openRaids = activeThreads.threads
+            .map(thread => ({
+                name: thread.name,
+                url: thread.url,
+                createdAt: thread.createdAt
+            }))
+            .sort((a, b) => b.createdAt - a.createdAt);
+
+        return openRaids;
+    } catch (error) {
+        console.error(`Error fetching open raids from ${forumChannelId}:`, error);
+        return [];
+    }
+}
+
+/**
+ * Sends raid reminder embeds for the specified system(s)
+ * @param {string} system - 'system1', 'system2', 'system3', or 'all'
+ */
+async function sendRaidReminders(system) {
+    const systems = {
+        system1: {
+            forumId: FORUM_CHANNEL_ID,
+            notifyId: NOTIFY_CHANNEL_ID,
+            roleId: RAIDER_ROLE_ID,
+            language: 'en',
+            name: 'System 1'
+        },
+        system2: {
+            forumId: FORUM_CHANNEL_ID_2,
+            notifyId: NOTIFY_CHANNEL_ID_2,
+            roleId: RAIDER_ROLE_ID_2,
+            language: 'en',
+            name: 'System 2'
+        },
+        system3: {
+            forumId: FORUM_CHANNEL_ID_3,
+            notifyId: NOTIFY_CHANNEL_ID_3,
+            roleId: RAIDER_ROLE_ID_3,
+            language: 'pt',
+            name: 'System 3 (PT)'
+        }
+    };
+
+    const systemsToProcess = system === 'all'
+        ? Object.keys(systems)
+        : [system];
+
+    for (const sysKey of systemsToProcess) {
+        const sys = systems[sysKey];
+        if (!sys || !sys.forumId || !sys.notifyId) {
+            console.log(`Skipping ${sysKey}: missing channel configuration`);
+            continue;
+        }
+
+        const openRaids = await getOpenRaids(sys.forumId);
+
+        if (openRaids.length === 0) {
+            console.log(`No open raids found for ${sys.name}`);
+            continue;
+        }
+
+        // Build the raid list (just the thread names as links)
+        const raidList = openRaids
+            .map(raid => `[${raid.name}](${raid.url})`)
+            .join('\n');
+
+        // Create embed based on language
+        let embed;
+        const raidCount = openRaids.length;
+        const raidWord = raidCount === 1 ? 'raid is' : 'raids are';
+        const raidWordPt = raidCount === 1 ? 'raid está' : 'raids estão';
+
+        if (sys.language === 'pt') {
+            embed = new EmbedBuilder()
+                .setColor(0xFFAA00)
+                .setTitle('⚔️ Raids Estão Abertas, Titans!')
+                .setDescription(`**${raidCount}** ${raidWordPt} esperando por você:\n\n${raidList}\n\nEntre lá, mostre seu apoio e espalhe a palavra.\nLonga vida ao seu Reinado! 👑`)
+                .setTimestamp();
+        } else {
+            embed = new EmbedBuilder()
+                .setColor(0xFFAA00)
+                .setTitle('⚔️ Raids Are Live, Titans!')
+                .setDescription(`**${raidCount}** ${raidWord} waiting for you:\n\n${raidList}\n\nGet in there, show some love, and spread the word.\nLong may you Reign! 👑`)
+                .setTimestamp();
+        }
+
+        try {
+            const notifyChannel = await client.channels.fetch(sys.notifyId);
+            await notifyChannel.send({ embeds: [embed] });
+            console.log(`Raid reminder sent for ${sys.name} (${openRaids.length} open raids)`);
+        } catch (error) {
+            console.error(`Error sending raid reminder for ${sys.name}:`, error);
+        }
+    }
+}
 
 client.on('messageCreate', async message => {
     // Auto-reply in forum threads for raid proof submissions
@@ -225,6 +357,75 @@ client.on('messageCreate', async message => {
         return true;
     };
 
+// Generic function to process the social media post queue
+function createQueueProcessor(queueRef, processingRef, lastTimeRef, forumId, notifyId, roleId, systemName, language = 'en') {
+    return async function processQueueInternal() {
+        const queue = queueRef();
+        const isProcessing = processingRef.get();
+
+        if (isProcessing || queue.length === 0) {
+            return;
+        }
+
+        processingRef.set(true);
+        const currentTime = Date.now();
+        const oneHour = 60 * 60 * 1000;
+        const lastTime = lastTimeRef.get();
+
+        if (currentTime - lastTime >= oneHour) {
+            const postData = queue.shift();
+
+            // Handle both old format (string) and new format (object with link and accountName)
+            const link = typeof postData === 'string' ? postData : postData.link;
+            const accountName = typeof postData === 'string' ? 'instagram' : postData.accountName;
+
+            await processTweet(link, forumId, notifyId, roleId, language, accountName);
+            lastTimeRef.set(currentTime);
+
+            console.log(`Queue processed (${systemName}). Remaining posts in queue: ${queue.length}`);
+
+            if (queue.length > 0) {
+                setTimeout(() => {
+                    processingRef.set(false);
+                    processQueueInternal();
+                }, oneHour);
+            } else {
+                processingRef.set(false);
+            }
+        } else {
+            const timeLeft = oneHour - (currentTime - lastTime);
+            console.log(`Next post will be processed in ${Math.round(timeLeft / 1000 / 60)} minutes (${systemName})`);
+
+            setTimeout(() => {
+                processingRef.set(false);
+                processQueueInternal();
+            }, timeLeft);
+        }
+    };
+}
+
+// Queue processors for each system
+const processQueue = createQueueProcessor(
+    () => tweetQueue,
+    { get: () => processingQueue, set: (v) => { processingQueue = v; } },
+    { get: () => lastTweetTime, set: (v) => { lastTweetTime = v; } },
+    FORUM_CHANNEL_ID, NOTIFY_CHANNEL_ID, RAIDER_ROLE_ID, 'System 1'
+);
+
+const processQueue2 = createQueueProcessor(
+    () => tweetQueue2,
+    { get: () => processingQueue2, set: (v) => { processingQueue2 = v; } },
+    { get: () => lastTweetTime2, set: (v) => { lastTweetTime2 = v; } },
+    FORUM_CHANNEL_ID_2, NOTIFY_CHANNEL_ID_2, RAIDER_ROLE_ID_2, 'System 2'
+);
+
+const processQueue3 = createQueueProcessor(
+    () => tweetQueue3,
+    { get: () => processingQueue3, set: (v) => { processingQueue3 = v; } },
+    { get: () => lastTweetTime3, set: (v) => { lastTweetTime3 = v; } },
+    FORUM_CHANNEL_ID_3, NOTIFY_CHANNEL_ID_3, RAIDER_ROLE_ID_3, 'System 3', 'pt'
+);
+
     // First raiding system
     if (handleSocialMediaLink(TWEET_CHANNEL_ID, raidToggles.system1, {
         queue: tweetQueue,
@@ -303,75 +504,6 @@ async function processTweet(tweetLink, forumChannelId, notifyChannelId, raiderRo
     console.error('Error processing social post:', error);
   }
 }
-
-// Generic function to process the social media post queue
-function createQueueProcessor(queueRef, processingRef, lastTimeRef, forumId, notifyId, roleId, systemName, language = 'en') {
-    return async function processQueueInternal() {
-        const queue = queueRef();
-        const isProcessing = processingRef.get();
-
-        if (isProcessing || queue.length === 0) {
-            return;
-        }
-
-        processingRef.set(true);
-        const currentTime = Date.now();
-        const oneHour = 60 * 60 * 1000;
-        const lastTime = lastTimeRef.get();
-
-        if (currentTime - lastTime >= oneHour) {
-            const postData = queue.shift();
-
-            // Handle both old format (string) and new format (object with link and accountName)
-            const link = typeof postData === 'string' ? postData : postData.link;
-            const accountName = typeof postData === 'string' ? 'instagram' : postData.accountName;
-
-            await processTweet(link, forumId, notifyId, roleId, language, accountName);
-            lastTimeRef.set(currentTime);
-
-            console.log(`Queue processed (${systemName}). Remaining posts in queue: ${queue.length}`);
-
-            if (queue.length > 0) {
-                setTimeout(() => {
-                    processingRef.set(false);
-                    processQueueInternal();
-                }, oneHour);
-            } else {
-                processingRef.set(false);
-            }
-        } else {
-            const timeLeft = oneHour - (currentTime - lastTime);
-            console.log(`Next post will be processed in ${Math.round(timeLeft / 1000 / 60)} minutes (${systemName})`);
-
-            setTimeout(() => {
-                processingRef.set(false);
-                processQueueInternal();
-            }, timeLeft);
-        }
-    };
-}
-
-// Queue processors for each system
-const processQueue = createQueueProcessor(
-    () => tweetQueue,
-    { get: () => processingQueue, set: (v) => { processingQueue = v; } },
-    { get: () => lastTweetTime, set: (v) => { lastTweetTime = v; } },
-    FORUM_CHANNEL_ID, NOTIFY_CHANNEL_ID, RAIDER_ROLE_ID, 'System 1'
-);
-
-const processQueue2 = createQueueProcessor(
-    () => tweetQueue2,
-    { get: () => processingQueue2, set: (v) => { processingQueue2 = v; } },
-    { get: () => lastTweetTime2, set: (v) => { lastTweetTime2 = v; } },
-    FORUM_CHANNEL_ID_2, NOTIFY_CHANNEL_ID_2, RAIDER_ROLE_ID_2, 'System 2'
-);
-
-const processQueue3 = createQueueProcessor(
-    () => tweetQueue3,
-    { get: () => processingQueue3, set: (v) => { processingQueue3 = v; } },
-    { get: () => lastTweetTime3, set: (v) => { lastTweetTime3 = v; } },
-    FORUM_CHANNEL_ID_3, NOTIFY_CHANNEL_ID_3, RAIDER_ROLE_ID_3, 'System 3', 'pt'
-);
 
     if (message.author.bot) return;
 
@@ -948,6 +1080,53 @@ if (command === 'riddlestats') {
     .setTimestamp();
   
   message.reply({ embeds: [statsEmbed] });
+}
+
+// Manual raid reminder command
+if (command === 'raidreminder') {
+    if (!message.member.permissions.has('ManageMessages')) {
+        return message.reply('You need Manage Messages permission to use this command.');
+    }
+
+    const target = args[0]?.toLowerCase();
+
+    if (!target) {
+        const helpEmbed = new EmbedBuilder()
+            .setColor(0xFFAA00)
+            .setTitle('Raid Reminder Command')
+            .setDescription('Manually trigger raid reminders for open raids.')
+            .addFields(
+                { name: '!raidreminder all', value: 'Send reminders for all raid systems' },
+                { name: '!raidreminder 1', value: 'Send reminder for System 1 (English)' },
+                { name: '!raidreminder 2', value: 'Send reminder for System 2 (English)' },
+                { name: '!raidreminder 3', value: 'Send reminder for System 3 (Portuguese)' },
+                { name: '!raidreminder status', value: 'Check cron job status' }
+            );
+        return message.channel.send({ embeds: [helpEmbed] });
+    }
+
+    if (target === 'status') {
+        const morningActive = raidReminderMorningJob !== null;
+        const eveningActive = raidReminderEveningJob !== null;
+        return message.reply(`Raid reminder cron jobs:\n• 6am JST: ${morningActive ? '✅ Active' : '❌ Inactive'}\n• 6pm JST: ${eveningActive ? '✅ Active' : '❌ Inactive'}`);
+    }
+
+    let system;
+    if (target === 'all') {
+        system = 'all';
+    } else if (target === '1') {
+        system = 'system1';
+    } else if (target === '2') {
+        system = 'system2';
+    } else if (target === '3') {
+        system = 'system3';
+    } else {
+        return message.reply('Invalid option. Use `all`, `1`, `2`, or `3`.');
+    }
+
+    await message.reply(`Sending raid reminder for ${system === 'all' ? 'all systems' : system}...`);
+    await sendRaidReminders(system);
+    await message.channel.send('Raid reminder(s) sent!');
 }
 
 // Individual progress command
