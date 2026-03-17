@@ -2107,26 +2107,26 @@ const commands = [
         .addStringOption(opt => opt.setName('name').setDescription('Unique name for the panel').setRequired(true)))
     .addSubcommand(sub =>
       sub.setName('edit').setDescription('Open the editor for an existing panel')
-        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true)))
+        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true).setAutocomplete(true)))
     .addSubcommand(sub =>
       sub.setName('list').setDescription('List all panels in this server'))
     .addSubcommand(sub =>
       sub.setName('delete').setDescription('Delete a panel')
-        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true)))
+        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true).setAutocomplete(true)))
     .addSubcommand(sub =>
       sub.setName('post').setDescription('Post a panel to a channel')
-        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true))
+        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true).setAutocomplete(true))
         .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in (defaults to current)').setRequired(false)))
     .addSubcommand(sub =>
       sub.setName('update').setDescription('Update all posted instances of a panel')
-        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true)))
+        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true).setAutocomplete(true)))
     .addSubcommand(sub =>
       sub.setName('json').setDescription('Import a panel from JSON')
         .addStringOption(opt => opt.setName('name').setDescription('Panel name (creates new or overwrites existing)').setRequired(true))
         .addStringOption(opt => opt.setName('data').setDescription('JSON data (or omit to open a modal)').setRequired(false)))
     .addSubcommand(sub =>
       sub.setName('export').setDescription('Export a panel as JSON')
-        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true))),
+        .addStringOption(opt => opt.setName('name').setDescription('Panel name').setRequired(true).setAutocomplete(true))),
 
   new SlashCommandBuilder()
     .setName('welcome')
@@ -2135,7 +2135,7 @@ const commands = [
       sub.setName('add').setDescription('Add a welcome trigger for a role')
         .addRoleOption(opt => opt.setName('role').setDescription('Role that triggers the welcome').setRequired(true))
         .addChannelOption(opt => opt.setName('channel').setDescription('Channel to send the welcome in').setRequired(true))
-        .addStringOption(opt => opt.setName('panel').setDescription('Panel name to send').setRequired(true)))
+        .addStringOption(opt => opt.setName('panel').setDescription('Panel name to send').setRequired(true).setAutocomplete(true)))
     .addSubcommand(sub =>
       sub.setName('remove').setDescription('Remove a welcome trigger')
         .addIntegerOption(opt => opt.setName('id').setDescription('Trigger ID (from /welcome list)').setRequired(true)))
@@ -2669,6 +2669,24 @@ client.on('messageCreate', async (message) => {
 // ========================================================================================
 
 client.on('interactionCreate', async interaction => {
+  // ── Panel/Welcome autocomplete ──
+  if (interaction.isAutocomplete()) {
+    const cmd = interaction.commandName;
+    const focused = interaction.options.getFocused(true);
+    if ((cmd === 'panel' || cmd === 'welcome') && (focused.name === 'name' || focused.name === 'panel')) {
+      try {
+        const panels = await dbAll('SELECT name FROM panels WHERE guild_id = ?', [interaction.guild.id]);
+        const query = focused.value.toLowerCase();
+        const filtered = panels
+          .filter(p => p.name.toLowerCase().includes(query))
+          .slice(0, 25)
+          .map(p => ({ name: p.name, value: p.name }));
+        await interaction.respond(filtered);
+      } catch { await interaction.respond([]); }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   try {
