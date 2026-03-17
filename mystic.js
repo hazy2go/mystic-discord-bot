@@ -1480,9 +1480,9 @@ async function sendWelcomePanel(member, trigger) {
     const channel = await member.guild.channels.fetch(trigger.channel_id).catch(() => null);
     if (!channel) return;
 
-    const payload = cm.toMessage();
-    payload.content = `<@${member.id}>`;
-    await channel.send(payload);
+    // Send the mention as a separate message since content can't mix with Components V2
+    await channel.send(`<@${member.id}>`);
+    await channel.send(cm.toMessage());
   } catch (err) {
     console.error(`[Welcome] Error sending welcome panel for trigger ${trigger.id}:`, err);
   }
@@ -3409,11 +3409,11 @@ client.on('interactionCreate', async interaction => {
 // ========================================================================================
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isButton() && !interaction.isModalSubmit() && !interaction.isSelectMenu()) return;
+  if (!interaction.isButton() && !interaction.isModalSubmit() && !interaction.isStringSelectMenu()) return;
 
   try {
     // ── Panel Editor Interactions ──
-    if (interaction.isSelectMenu() && (interaction.customId === 'pe_select' || interaction.customId === 'pe_add')) {
+    if (interaction.isStringSelectMenu() && (interaction.customId === 'pe_select' || interaction.customId === 'pe_add')) {
       await handlePanelEditorSelect(interaction);
       return;
     }
