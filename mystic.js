@@ -1575,12 +1575,30 @@ async function handleSendCommand(interaction) {
   }
 
   const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
-  const mode = interaction.options.getString('mode') || 'embed';
+  const mode = interaction.options.getString('mode') || 'plain';
   const file = interaction.options.getAttachment('file') || null;
   const stateKey = `${interaction.guild.id}:${interaction.user.id}`;
 
+  // If only a file is attached with no text needed, send it directly
+  if (file && mode === 'plain') {
+    const channel = await interaction.guild.channels.fetch(targetChannel.id).catch(() => null);
+    if (!channel) { await interaction.reply({ content: 'Target channel not found.', flags: MessageFlags.Ephemeral }); return; }
+
+    // Still open modal for optional text, but make content not required
+    sendCommandState.set(stateKey, { channelId: targetChannel.id, mode, fileUrl: file.url, fileName: file.name });
+    setTimeout(() => sendCommandState.delete(stateKey), 5 * 60 * 1000);
+
+    const modal = new ModalBuilder().setCustomId('send_modal:plain').setTitle('Send as Bot');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('content').setLabel('Message text (optional, leave empty for file only)').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setRequired(false)
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
   sendCommandState.set(stateKey, { channelId: targetChannel.id, mode, fileUrl: file?.url || null, fileName: file?.name || null });
-  // Clean up after 5 minutes
   setTimeout(() => sendCommandState.delete(stateKey), 5 * 60 * 1000);
 
   if (mode === 'plain') {
@@ -1606,7 +1624,7 @@ async function handleSendCommand(interaction) {
     );
     await interaction.showModal(modal);
   } else {
-    // Embed mode (default)
+    // Embed mode
     const modal = new ModalBuilder().setCustomId('send_modal:embed').setTitle('Send Embed as Bot');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -1648,8 +1666,13 @@ async function handleSendModal(interaction) {
   const files = state.fileUrl ? [new AttachmentBuilder(state.fileUrl, { name: state.fileName || 'attachment' })] : [];
 
   if (mode === 'plain') {
-    const content = interaction.fields.getTextInputValue('content');
-    const payload = { content };
+    const content = interaction.fields.getTextInputValue('content')?.trim() || null;
+    if (!content && files.length === 0) {
+      await interaction.reply({ content: 'Nothing to send. Provide text or attach a file.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+    const payload = {};
+    if (content) payload.content = content;
     if (files.length > 0) payload.files = files;
     await channel.send(payload);
     await interaction.reply({ content: `Message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
