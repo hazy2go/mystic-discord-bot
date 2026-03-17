@@ -1576,9 +1576,10 @@ async function handleSendCommand(interaction) {
 
   const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
   const mode = interaction.options.getString('mode') || 'embed';
+  const file = interaction.options.getAttachment('file') || null;
   const stateKey = `${interaction.guild.id}:${interaction.user.id}`;
 
-  sendCommandState.set(stateKey, { channelId: targetChannel.id, mode });
+  sendCommandState.set(stateKey, { channelId: targetChannel.id, mode, fileUrl: file?.url || null, fileName: file?.name || null });
   // Clean up after 5 minutes
   setTimeout(() => sendCommandState.delete(stateKey), 5 * 60 * 1000);
 
@@ -1644,10 +1645,13 @@ async function handleSendModal(interaction) {
   }
 
   const mode = interaction.customId.replace('send_modal:', '');
+  const files = state.fileUrl ? [new AttachmentBuilder(state.fileUrl, { name: state.fileName || 'attachment' })] : [];
 
   if (mode === 'plain') {
     const content = interaction.fields.getTextInputValue('content');
-    await channel.send(content);
+    const payload = { content };
+    if (files.length > 0) payload.files = files;
+    await channel.send(payload);
     await interaction.reply({ content: `Message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
     return;
   }
@@ -1665,6 +1669,8 @@ async function handleSendModal(interaction) {
       cm._components.push({ type: 'gallery', items: [{ url: imageUrl }] });
     }
 
+    // Files can't be sent with Components V2 flag, send separately
+    if (files.length > 0) await channel.send({ files });
     await channel.send(cm.toMessage());
     await interaction.reply({ content: `Panel message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
     return;
@@ -1683,7 +1689,9 @@ async function handleSendModal(interaction) {
   if (imageUrl && /^https?:\/\/.+/i.test(imageUrl)) embed.setImage(imageUrl);
   if (thumbnailUrl && /^https?:\/\/.+/i.test(thumbnailUrl)) embed.setThumbnail(thumbnailUrl);
 
-  await channel.send({ embeds: [embed] });
+  const payload = { embeds: [embed] };
+  if (files.length > 0) payload.files = files;
+  await channel.send(payload);
   await interaction.reply({ content: `Embed sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
 }
 
@@ -2289,7 +2297,8 @@ const commands = [
         { name: 'Plain text', value: 'plain' },
         { name: 'Embed', value: 'embed' },
         { name: 'Components V2 Panel', value: 'panel' },
-      )),
+      ))
+    .addAttachmentOption(opt => opt.setName('file').setDescription('Attach a file (image, video, etc.)').setRequired(false)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
