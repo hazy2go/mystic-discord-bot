@@ -1656,26 +1656,39 @@ async function handleSendModal(interaction) {
   }
   sendCommandState.delete(stateKey);
 
+  // Defer immediately — file downloads can take time
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const channel = await interaction.guild.channels.fetch(state.channelId).catch(() => null);
   if (!channel) {
-    await interaction.reply({ content: 'Target channel no longer exists.', flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: 'Target channel no longer exists.' });
     return;
   }
 
   const mode = interaction.customId.replace('send_modal:', '');
-  const files = state.fileUrl ? [new AttachmentBuilder(state.fileUrl, { name: state.fileName || 'attachment' })] : [];
+  const files = [];
+  if (state.fileUrl) {
+    try {
+      const res = await fetch(state.fileUrl);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      files.push(new AttachmentBuilder(buffer, { name: state.fileName || 'attachment' }));
+    } catch (err) {
+      await interaction.editReply({ content: `Failed to download attachment: ${err.message}` });
+      return;
+    }
+  }
 
   if (mode === 'plain') {
     const content = interaction.fields.getTextInputValue('content')?.trim() || null;
     if (!content && files.length === 0) {
-      await interaction.reply({ content: 'Nothing to send. Provide text or attach a file.', flags: MessageFlags.Ephemeral });
+      await interaction.editReply({ content: 'Nothing to send. Provide text or attach a file.' });
       return;
     }
     const payload = {};
     if (content) payload.content = content;
     if (files.length > 0) payload.files = files;
     await channel.send(payload);
-    await interaction.reply({ content: `Message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: `Message sent to <#${channel.id}>.` });
     return;
   }
 
@@ -1695,7 +1708,7 @@ async function handleSendModal(interaction) {
     // Files can't be sent with Components V2 flag, send separately
     if (files.length > 0) await channel.send({ files });
     await channel.send(cm.toMessage());
-    await interaction.reply({ content: `Panel message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: `Panel message sent to <#${channel.id}>.` });
     return;
   }
 
@@ -1715,7 +1728,7 @@ async function handleSendModal(interaction) {
   const payload = { embeds: [embed] };
   if (files.length > 0) payload.files = files;
   await channel.send(payload);
-  await interaction.reply({ content: `Embed sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+  await interaction.editReply({ content: `Embed sent to <#${channel.id}>.` });
 }
 
 // ========================================================================================
