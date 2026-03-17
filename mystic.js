@@ -1591,7 +1591,7 @@ async function handleSendCommand(interaction) {
     const modal = new ModalBuilder().setCustomId('send_modal:plain').setTitle('Send as Bot');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('content').setLabel('Message text (optional, leave empty for file only)').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setRequired(false)
+        new TextInputBuilder().setCustomId('content').setLabel('Message text (optional)').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setRequired(false)
       )
     );
     await interaction.showModal(modal);
