@@ -193,6 +193,7 @@ const client = new Client({
     GatewayIntentBits.GuildPresences,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+  rest: { timeout: 300_000 }, // 5 min timeout for large file uploads
 });
 
 // ========================================================================================
