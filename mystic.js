@@ -1579,22 +1579,20 @@ async function handleSendCommand(interaction) {
   const file = interaction.options.getAttachment('file') || null;
   const stateKey = `${interaction.guild.id}:${interaction.user.id}`;
 
-  // If only a file is attached with no text needed, send it directly
+  // File-only: skip the modal, send directly
   if (file && mode === 'plain') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const channel = await interaction.guild.channels.fetch(targetChannel.id).catch(() => null);
-    if (!channel) { await interaction.reply({ content: 'Target channel not found.', flags: MessageFlags.Ephemeral }); return; }
+    if (!channel) { await interaction.editReply({ content: 'Target channel not found.' }); return; }
 
-    // Still open modal for optional text, but make content not required
-    sendCommandState.set(stateKey, { channelId: targetChannel.id, mode, fileUrl: file.url, fileName: file.name });
-    setTimeout(() => sendCommandState.delete(stateKey), 5 * 60 * 1000);
-
-    const modal = new ModalBuilder().setCustomId('send_modal:plain').setTitle('Send as Bot');
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('content').setLabel('Message text (optional)').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setRequired(false)
-      )
-    );
-    await interaction.showModal(modal);
+    try {
+      const res = await fetch(file.url);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      await channel.send({ files: [new AttachmentBuilder(buffer, { name: file.name || 'attachment' })] });
+      await interaction.editReply({ content: `File sent to <#${channel.id}>.` });
+    } catch (err) {
+      await interaction.editReply({ content: `Failed to send file: ${err.message}` });
+    }
     return;
   }
 
