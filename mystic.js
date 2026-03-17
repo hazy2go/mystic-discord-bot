@@ -9,41 +9,50 @@
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  SLASH COMMANDS                                                                ║
 // ║  ──────────────                                                                ║
-// ║  /data              - Look up your tournament registration & bracket data      ║
-// ║  /win @user          - Declare a tournament match winner, rename channel,      ║
-// ║                        update permissions, and ping relevant moderators         ║
-// ║  /win-stats          - View how many times each mod has used /win              ║
-// ║  /reset-win-stats    - Reset all moderator /win usage statistics (admin)       ║
-// ║  /archive            - Export a channel's messages to a text transcript         ║
-// ║                        with timeframe filters and bot-message toggle           ║
-// ║  /update-database    - Upload an Excel/CSV file to refresh the tournament DB   ║
-// ║                        with preview mode for safety                            ║
-// ║  /panel              - Create, edit, post, and manage Components V2 panels     ║
-// ║     create/edit/list/delete/post/update/json/export subcommands                ║
-// ║  /welcome            - Manage role-triggered welcome messages using panels     ║
-// ║     add/remove/list subcommands                                                ║
+// ║  /data               - Look up your tournament registration & bracket data     ║
+// ║  /win @user           - Declare a tournament match winner, rename channel,     ║
+// ║                         update permissions, and ping relevant moderators        ║
+// ║  /win-stats           - View how many times each mod has used /win             ║
+// ║  /reset-win-stats     - Reset all moderator /win usage statistics (admin)      ║
+// ║  /archive             - Export a channel's messages to a text transcript        ║
+// ║                         with timeframe filters and bot-message toggle          ║
+// ║  /update-database     - Upload an Excel/CSV file to refresh the tournament DB  ║
+// ║                         with preview mode for safety                           ║
+// ║  /panel create <name> - Create a new Components V2 panel and open the editor   ║
+// ║  /panel edit <name>   - Open the visual editor for an existing panel           ║
+// ║  /panel list          - List all panels in the server                          ║
+// ║  /panel delete <name> - Delete a panel (cascade-deletes posts & triggers)      ║
+// ║  /panel post <name>   - Post a panel to a channel as a V2 container message    ║
+// ║  /panel update <name> - Update all posted instances of a panel in-place        ║
+// ║  /panel json <name>   - Import a panel from JSON (inline or via modal)         ║
+// ║  /panel export <name> - Export a panel as JSON                                 ║
+// ║  /welcome add         - Add a role-triggered welcome message using a panel     ║
+// ║  /welcome remove      - Remove a welcome trigger by ID                         ║
+// ║  /welcome list        - List all welcome triggers in the server                ║
+// ║  /send [channel]      - Send a message as the bot (plain, embed, or panel)     ║
+// ║                         Opens a modal to compose the message content            ║
 // ║                                                                                ║
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  PREFIX COMMANDS (!)                                                           ║
 // ║  ───────────────────                                                           ║
-// ║  !create             - Bulk-create tournament ticket channels for eligible     ║
-// ║                        holders (admin only)                                    ║
-// ║  !upload             - Upload an attachment and get a permanent CDN link       ║
-// ║  !roll @player       - Random ban-order roll for tournament matches (30s cd)   ║
-// ║  !rollcd             - Check your remaining roll cooldown                      ║
-// ║  !fetchimages        - Download all images from a specific bot in a channel    ║
-// ║                        Usage: !fetchimages [channelID] [botID] (limit)         ║
-// ║  !report             - Generate an AI-powered chat summary via OpenAI          ║
-// ║                        Usage: !report [channelID] [24h|7d]                     ║
-// ║  !riddle             - Post the Complete the Line Challenge with submit button ║
-// ║  !riddlereminder     - Schedule/stop automated challenge reminders (12h)       ║
-// ║  !riddlereset        - Reset challenge progress so all users can retry         ║
-// ║  !riddlestats        - View challenge participation & completion statistics    ║
-// ║  !riddleprogress     - Check an individual user's challenge attempts           ║
-// ║                        Usage: !riddleprogress [userID]                         ║
-// ║  !raidreminder       - Manually trigger raid reminders for open raids          ║
-// ║                        Usage: !raidreminder [all|1|2|3|status]                 ║
-// ║  !setup              - Interactive forum post builder with buttons             ║
+// ║  !create              - Bulk-create tournament ticket channels for eligible    ║
+// ║                         holders (admin only)                                   ║
+// ║  !upload              - Upload an attachment and get a permanent CDN link      ║
+// ║  !roll @player        - Random ban-order roll for tournament matches (30s cd)  ║
+// ║  !rollcd              - Check your remaining roll cooldown                     ║
+// ║  !fetchimages         - Download all images from a specific bot in a channel   ║
+// ║                         Usage: !fetchimages [channelID] [botID] (limit)        ║
+// ║  !report              - Generate an AI-powered chat summary via OpenAI         ║
+// ║                         Usage: !report [channelID] [24h|7d]                    ║
+// ║  !riddle              - Post the Complete the Line Challenge with submit button║
+// ║  !riddlereminder      - Schedule/stop automated challenge reminders (12h)      ║
+// ║  !riddlereset         - Reset challenge progress so all users can retry        ║
+// ║  !riddlestats         - View challenge participation & completion statistics   ║
+// ║  !riddleprogress      - Check an individual user's challenge attempts          ║
+// ║                         Usage: !riddleprogress [userID]                        ║
+// ║  !raidreminder        - Manually trigger raid reminders for open raids         ║
+// ║                         Usage: !raidreminder [all|1|2|3|status]                ║
+// ║  !setup               - Interactive forum post builder with buttons            ║
 // ║                                                                                ║
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  AUTOMATED FEATURES                                                            ║
@@ -56,12 +65,15 @@
 // ║    in mapped tournament category IDs                                           ║
 // ║  - Challenge system: Modal-based answer submission with unlimited attempts,    ║
 // ║    progress tracking, and mod notifications on correct answers                 ║
+// ║  - Welcome system: Sends a panel message when a member receives a role         ║
+// ║    with text interpolation ({user.mention}, {server}, etc.)                    ║
 // ║                                                                                ║
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  CONFIGURATION                                                                 ║
 // ║  ─────────────                                                                 ║
 // ║  All secrets & channel IDs are loaded from .env (see .env.example).            ║
 // ║  Tournament data is stored in SQLite (TTV10.db).                               ║
+// ║  Panel, post, and welcome data stored in SQLite (TTV10.db).                    ║
 // ║  Mod stats are persisted in mod-stats.json.                                    ║
 // ║                                                                                ║
 // ╚══════════════════════════════════════════════════════════════════════════════════╝
