@@ -1480,7 +1480,9 @@ async function sendWelcomePanel(member, trigger) {
     const channel = await member.guild.channels.fetch(trigger.channel_id).catch(() => null);
     if (!channel) return;
 
-    await channel.send(cm.toMessage());
+    const payload = cm.toMessage();
+    payload.content = `<@${member.id}>`;
+    await channel.send(payload);
   } catch (err) {
     console.error(`[Welcome] Error sending welcome panel for trigger ${trigger.id}:`, err);
   }
