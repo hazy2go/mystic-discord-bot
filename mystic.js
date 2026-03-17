@@ -1550,6 +1550,132 @@ async function handleWelcomeList(interaction) {
 }
 
 // ========================================================================================
+// SEND-AS-BOT SYSTEM
+// ========================================================================================
+
+// Temporary state for /send command (stores target channel while modal is open)
+const sendCommandState = new Map(); // key: "guildId:userId" → { channelId, mode }
+
+async function handleSendCommand(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'You need Administrator permission to use this command.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+  const mode = interaction.options.getString('mode') || 'embed';
+  const stateKey = `${interaction.guild.id}:${interaction.user.id}`;
+
+  sendCommandState.set(stateKey, { channelId: targetChannel.id, mode });
+  // Clean up after 5 minutes
+  setTimeout(() => sendCommandState.delete(stateKey), 5 * 60 * 1000);
+
+  if (mode === 'plain') {
+    const modal = new ModalBuilder().setCustomId('send_modal:plain').setTitle('Send Message as Bot');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('content').setLabel('Message content').setStyle(TextInputStyle.Paragraph).setMaxLength(2000).setRequired(true)
+      )
+    );
+    await interaction.showModal(modal);
+  } else if (mode === 'panel') {
+    const modal = new ModalBuilder().setCustomId('send_modal:panel').setTitle('Send Components V2 Panel as Bot');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('content').setLabel('Text content (supports markdown)').setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('image_url').setLabel('Image URL (optional)').setStyle(TextInputStyle.Short).setRequired(false)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('color').setLabel('Accent color hex (optional, e.g. #E8943A)').setStyle(TextInputStyle.Short).setMaxLength(7).setRequired(false)
+      )
+    );
+    await interaction.showModal(modal);
+  } else {
+    // Embed mode (default)
+    const modal = new ModalBuilder().setCustomId('send_modal:embed').setTitle('Send Embed as Bot');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('title').setLabel('Title (optional)').setStyle(TextInputStyle.Short).setMaxLength(256).setRequired(false)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('content').setLabel('Description / body text').setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('image_url').setLabel('Image URL (optional)').setStyle(TextInputStyle.Short).setRequired(false)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('thumbnail_url').setLabel('Thumbnail URL (optional)').setStyle(TextInputStyle.Short).setRequired(false)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('color').setLabel('Color hex (optional, e.g. #E8943A)').setStyle(TextInputStyle.Short).setMaxLength(7).setRequired(false)
+      )
+    );
+    await interaction.showModal(modal);
+  }
+}
+
+async function handleSendModal(interaction) {
+  const stateKey = `${interaction.guild.id}:${interaction.user.id}`;
+  const state = sendCommandState.get(stateKey);
+  if (!state) {
+    await interaction.reply({ content: 'Session expired. Please run `/send` again.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  sendCommandState.delete(stateKey);
+
+  const channel = await interaction.guild.channels.fetch(state.channelId).catch(() => null);
+  if (!channel) {
+    await interaction.reply({ content: 'Target channel no longer exists.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const mode = interaction.customId.replace('send_modal:', '');
+
+  if (mode === 'plain') {
+    const content = interaction.fields.getTextInputValue('content');
+    await channel.send(content);
+    await interaction.reply({ content: `Message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (mode === 'panel') {
+    const content = interaction.fields.getTextInputValue('content');
+    const imageUrl = interaction.fields.getTextInputValue('image_url')?.trim() || null;
+    const colorInput = interaction.fields.getTextInputValue('color')?.trim() || null;
+    const color = colorInput ? parseInt(colorInput.replace('#', ''), 16) || 0xE8943A : 0xE8943A;
+
+    const cm = new ContainerMessage();
+    cm._color = color;
+    cm._components = [{ type: 'text', content }];
+    if (imageUrl && /^https?:\/\/.+/i.test(imageUrl)) {
+      cm._components.push({ type: 'gallery', items: [{ url: imageUrl }] });
+    }
+
+    await channel.send(cm.toMessage());
+    await interaction.reply({ content: `Panel message sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // Embed mode
+  const title = interaction.fields.getTextInputValue('title')?.trim() || null;
+  const content = interaction.fields.getTextInputValue('content');
+  const imageUrl = interaction.fields.getTextInputValue('image_url')?.trim() || null;
+  const thumbnailUrl = interaction.fields.getTextInputValue('thumbnail_url')?.trim() || null;
+  const colorInput = interaction.fields.getTextInputValue('color')?.trim() || null;
+  const color = colorInput ? parseInt(colorInput.replace('#', ''), 16) || 0xE8943A : 0xE8943A;
+
+  const embed = new EmbedBuilder().setColor(color).setDescription(content);
+  if (title) embed.setTitle(title);
+  if (imageUrl && /^https?:\/\/.+/i.test(imageUrl)) embed.setImage(imageUrl);
+  if (thumbnailUrl && /^https?:\/\/.+/i.test(thumbnailUrl)) embed.setThumbnail(thumbnailUrl);
+
+  await channel.send({ embeds: [embed] });
+  await interaction.reply({ content: `Embed sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+}
+
+// ========================================================================================
 // RAID SYSTEM FUNCTIONS
 // ========================================================================================
 
@@ -2141,6 +2267,17 @@ const commands = [
         .addIntegerOption(opt => opt.setName('id').setDescription('Trigger ID (from /welcome list)').setRequired(true)))
     .addSubcommand(sub =>
       sub.setName('list').setDescription('List all welcome triggers')),
+
+  new SlashCommandBuilder()
+    .setName('send')
+    .setDescription('Send a message as the bot')
+    .addChannelOption(opt => opt.setName('channel').setDescription('Channel to send in (defaults to current)').setRequired(false))
+    .addStringOption(opt => opt.setName('mode').setDescription('Message format').setRequired(false)
+      .addChoices(
+        { name: 'Plain text', value: 'plain' },
+        { name: 'Embed', value: 'embed' },
+        { name: 'Components V2 Panel', value: 'panel' },
+      )),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -3177,6 +3314,11 @@ client.on('interactionCreate', async interaction => {
       await handleWelcomeCommand(interaction);
     }
 
+    // /send - Send message as bot
+    else if (interaction.commandName === 'send') {
+      await handleSendCommand(interaction);
+    }
+
     // /archive - Channel archiving
     else if (interaction.commandName === 'archive') {
       if (!interaction.member.permissions.has('MANAGE_CHANNELS')) {
@@ -3423,6 +3565,10 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     if (interaction.isModalSubmit() && interaction.customId.startsWith('pe_modal:')) {
       await handlePanelEditorModal(interaction);
+      return;
+    }
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('send_modal:')) {
+      await handleSendModal(interaction);
       return;
     }
 
