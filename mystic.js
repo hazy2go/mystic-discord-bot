@@ -31,6 +31,9 @@
 // ║  /welcome list        - List all welcome triggers in the server                ║
 // ║  /send [channel]      - Send a message as the bot (plain, embed, or panel)     ║
 // ║                         Opens a modal to compose the message content            ║
+// ║  /raidreward          - Reward all commenters in raids older than 48h with     ║
+// ║                         2 medium loot boxes each (per raid, across all 3        ║
+// ║                         systems), log to loot channel, delete rewarded raids    ║
 // ║                                                                                ║
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  PREFIX COMMANDS (!)                                                           ║
@@ -170,6 +173,13 @@ const TWEET_CHANNEL_ID_3 = process.env.TWEET_CHANNEL_ID_3;
 const FORUM_CHANNEL_ID_3 = process.env.FORUM_CHANNEL_ID_3;
 const NOTIFY_CHANNEL_ID_3 = process.env.NOTIFY_CHANNEL_ID_3;
 const RAIDER_ROLE_ID_3 = process.env.RAIDER_ROLE_ID_3;
+
+// Loot API (shared with Toruk bot — hub.reignoftitans.gg)
+const LOOT_API_HOST = 'https://hub.reignoftitans.gg';
+const LOOT_API_KEY = process.env.DISCORD_BOT_KEY;
+const LOOT_LOG_CHANNEL_ID = '1076148552964776057';
+const RAID_REWARD_AMOUNT = 2; // medium loot boxes per raid commented in
+const RAID_REWARD_MIN_AGE_MS = 48 * 60 * 60 * 1000; // only raids older than 48h
 
 // Raid type toggles
 const raidToggles = {
@@ -1751,6 +1761,189 @@ async function getOpenRaids(forumChannelId) {
   }
 }
 
+// ========================================================================================
+// RAID REWARD SYSTEM (/raidreward)
+// ========================================================================================
+
+const lootDelay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Fetch all raid threads (active + archived) in a forum that are older than 48h
+ */
+async function getRewardableRaids(forumChannelId, systemName) {
+  const threads = [];
+  try {
+    const forumChannel = await client.channels.fetch(forumChannelId);
+    if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+      console.error(`Channel ${forumChannelId} is not a forum channel`);
+      return [];
+    }
+
+    const active = await forumChannel.threads.fetchActive();
+    active.threads.forEach(thread => threads.push(thread));
+
+    // Paginate through archived threads too (raids may auto-archive before 48h)
+    let hasMore = true;
+    let before = undefined;
+    while (hasMore) {
+      const archived = await forumChannel.threads.fetchArchived({ limit: 100, before });
+      archived.threads.forEach(thread => threads.push(thread));
+      hasMore = archived.hasMore;
+      if (hasMore && archived.threads.size > 0) {
+        before = archived.threads.last().id;
+      } else {
+        hasMore = false;
+      }
+    }
+  } catch (error) {
+    console.error(`Error fetching rewardable raids from ${forumChannelId}:`, error);
+    return [];
+  }
+
+  const cutoff = Date.now() - RAID_REWARD_MIN_AGE_MS;
+  return threads
+    .filter(thread => thread.createdTimestamp && thread.createdTimestamp < cutoff)
+    .map(thread => ({ thread, systemName }));
+}
+
+/**
+ * Collect unique non-bot users who commented in a raid thread
+ */
+async function getRaidCommenters(thread) {
+  const commenters = new Map(); // userId -> user
+  let before = undefined;
+
+  while (true) {
+    const messages = await thread.messages.fetch({ limit: 100, before });
+    if (messages.size === 0) break;
+
+    messages.forEach(msg => {
+      if (!msg.author.bot) commenters.set(msg.author.id, msg.author);
+    });
+
+    if (messages.size < 100) break;
+    before = messages.last().id;
+  }
+
+  return [...commenters.values()];
+}
+
+/**
+ * Give medium loot boxes to a user via the loot API (same API as Toruk bot)
+ */
+async function giveRaidLoot(discordId, amount) {
+  const response = await axios.post(`${LOOT_API_HOST}/api/addLootboxes`, {
+    amount,
+    discordId,
+    type: 'medium'
+  }, {
+    headers: { 'x-access-token': LOOT_API_KEY }
+  });
+  if (response.data.err) throw new Error(response.data.err);
+}
+
+/**
+ * /raidreward — reward every commenter in raids older than 48h with medium loot
+ * boxes (2 per raid), log to the loot log channel, then delete the rewarded raids.
+ */
+async function handleRaidRewardCommand(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({ content: 'You need Administrator permission to use this command.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!LOOT_API_KEY) {
+    return interaction.reply({ content: '❌ `DISCORD_BOT_KEY` is missing from the .env — the loot API cannot be reached.', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply();
+
+  const systems = [
+    { forumId: FORUM_CHANNEL_ID, name: 'System 1' },
+    { forumId: FORUM_CHANNEL_ID_2, name: 'System 2' },
+    { forumId: FORUM_CHANNEL_ID_3, name: 'System 3 (PT)' },
+  ];
+
+  // Gather eligible raids across all 3 systems
+  let raids = [];
+  for (const sys of systems) {
+    if (!sys.forumId) continue;
+    raids = raids.concat(await getRewardableRaids(sys.forumId, sys.name));
+  }
+
+  if (raids.length === 0) {
+    return interaction.editReply('No raids older than 48h found across the 3 systems. Nothing to reward.');
+  }
+
+  await interaction.editReply(`Found **${raids.length}** raid${raids.length !== 1 ? 's' : ''} older than 48h. Processing...`);
+
+  const logChannel = client.channels.cache.get(LOOT_LOG_CHANNEL_ID)
+    || await client.channels.fetch(LOOT_LOG_CHANNEL_ID).catch(() => null);
+
+  const summary = { raidsDeleted: 0, raidsKept: 0, usersRewarded: 0, boxesGiven: 0, failures: [] };
+
+  for (let i = 0; i < raids.length; i++) {
+    const { thread, systemName } = raids[i];
+    const raidName = thread.name;
+
+    try {
+      const commenters = await getRaidCommenters(thread);
+      const rewarded = [];
+      const failed = [];
+
+      for (const user of commenters) {
+        try {
+          await giveRaidLoot(user.id, RAID_REWARD_AMOUNT);
+          rewarded.push(user);
+        } catch (error) {
+          console.error(`Raid reward failed for ${user.tag} in "${raidName}":`, error.message);
+          failed.push({ user, error: error.message });
+        }
+        await lootDelay(500);
+      }
+
+      summary.usersRewarded += rewarded.length;
+      summary.boxesGiven += rewarded.length * RAID_REWARD_AMOUNT;
+
+      // Log to the loot log channel (same channel Toruk uses)
+      if (logChannel && rewarded.length > 0) {
+        const userList = rewarded.map(u => u.tag).join(', ');
+        await logChannel.send(
+          `${RAID_REWARD_AMOUNT} medium lootboxes added to ${rewarded.length} user${rewarded.length !== 1 ? 's' : ''} by ${interaction.user.tag} (raid reward — ${systemName}: "${raidName}"):\n${userList}`
+        ).catch(err => console.error('Error logging raid reward:', err));
+      }
+
+      if (failed.length > 0) {
+        // Keep the raid so a re-run can retry the failed users
+        summary.raidsKept++;
+        failed.forEach(f => summary.failures.push(`${f.user.tag} in "${raidName}": ${f.error}`));
+      } else {
+        await thread.delete(`Raid rewarded & closed via /raidreward by ${interaction.user.tag}`);
+        summary.raidsDeleted++;
+      }
+    } catch (error) {
+      console.error(`Error processing raid "${raidName}":`, error);
+      summary.raidsKept++;
+      summary.failures.push(`Raid "${raidName}": ${error.message}`);
+    }
+
+    if ((i + 1) % 3 === 0 || i === raids.length - 1) {
+      await interaction.editReply(`Processing raids... ${i + 1}/${raids.length} done`).catch(() => {});
+    }
+  }
+
+  let result = `**Raid Reward Complete** ⚔️\n\n`;
+  result += `🎁 **${summary.boxesGiven}** medium loot boxes given to **${summary.usersRewarded}** commenter${summary.usersRewarded !== 1 ? 's' : ''}\n`;
+  result += `🗑️ **${summary.raidsDeleted}**/${raids.length} raids deleted\n`;
+  if (summary.raidsKept > 0) {
+    result += `⚠️ **${summary.raidsKept}** raid${summary.raidsKept !== 1 ? 's' : ''} kept (errors — re-run to retry):\n`;
+    result += summary.failures.slice(0, 10).map(f => `• ${f}`).join('\n');
+    if (summary.failures.length > 10) result += `\n• ...and ${summary.failures.length - 10} more (see console)`;
+  }
+
+  if (result.length > 2000) result = result.slice(0, 1990) + '\n...';
+  await interaction.editReply(result);
+}
+
 async function sendRaidReminders(system) {
   const systems = {
     system1: { forumId: FORUM_CHANNEL_ID, notifyId: NOTIFY_CHANNEL_ID, roleId: RAIDER_ROLE_ID, language: 'en', name: 'System 1' },
@@ -2334,6 +2527,11 @@ const commands = [
         { name: 'Components V2 Panel', value: 'panel' },
       ))
     .addAttachmentOption(opt => opt.setName('file').setDescription('Attach a file (image, video, etc.)').setRequired(false)),
+
+  new SlashCommandBuilder()
+    .setName('raidreward')
+    .setDescription('Reward all commenters in raids older than 48h with 2 medium loot boxes, then delete the raids')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -3373,6 +3571,11 @@ client.on('interactionCreate', async interaction => {
     // /send - Send message as bot
     else if (interaction.commandName === 'send') {
       await handleSendCommand(interaction);
+    }
+
+    // /raidreward - Reward raid commenters & clean up old raids
+    else if (interaction.commandName === 'raidreward') {
+      await handleRaidRewardCommand(interaction);
     }
 
     // /archive - Channel archiving
