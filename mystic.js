@@ -34,6 +34,7 @@
 // ║  /raidreward          - Reward all commenters in raids older than 48h with     ║
 // ║                         2 medium loot boxes each (per raid, across all 3        ║
 // ║                         systems), log to loot channel, delete rewarded raids    ║
+// ║  /help                - Show all commands grouped by category (ephemeral)      ║
 // ║                                                                                ║
 // ╠══════════════════════════════════════════════════════════════════════════════════╣
 // ║  PREFIX COMMANDS (!)                                                           ║
@@ -118,15 +119,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   Events,
-  Collection,
   ContainerBuilder,
-  TextDisplayBuilder,
-  SectionBuilder,
-  SeparatorBuilder,
-  MediaGalleryBuilder,
-  MediaGalleryItemBuilder,
-  ThumbnailBuilder,
-  FileBuilder,
   SeparatorSpacingSize,
   MessageFlags,
   StringSelectMenuBuilder,
@@ -292,7 +285,6 @@ function dbAll(sql, params = []) {
 
 // Command cooldowns
 const cooldowns = new Map();
-let commandCounter = 0;
 
 // Roll cooldowns
 const rollCooldowns = new Map();
@@ -342,17 +334,6 @@ let forumBuilderChannelId;
 let embedTitle = '';
 let embedDescription = '';
 let embedImageUrl = '';
-
-// CSV writer for message logging
-const csvFilePath = 'messages.csv';
-const csvWriter = createCsvWriter({
-  path: csvFilePath,
-  header: [
-    { id: 'username', title: 'USERNAME' },
-    { id: 'message', title: 'MESSAGE' },
-  ],
-  append: true,
-});
 
 // ========================================================================================
 // TOURNAMENT AUTO-POST MESSAGES (by category ID)
@@ -1843,6 +1824,57 @@ async function giveRaidLoot(discordId, amount) {
 }
 
 /**
+ * /help — show all Mystic commands grouped by category
+ */
+async function handleHelpCommand(interaction) {
+  const embed = new EmbedBuilder()
+    .setTitle('🔮 Mystic 2.0 — Command Guide')
+    .setColor(0x9b59b6)
+    .setDescription('Slash commands use `/`, prefix commands use `!`. Restricted commands are marked.')
+    .addFields(
+      {
+        name: '🏆 Tournament',
+        value:
+          '`/data` your registration & bracket data • `/win @user` declare winner [Mod]\n' +
+          '`/win-stats` mod /win usage • `/reset-win-stats` reset stats [Admin]\n' +
+          '`/update-database` upload Excel/CSV tournament DB [Admin]\n' +
+          '`!create` bulk-create ticket channels [Admin] • `!roll @player` ban-order roll • `!rollcd` cooldown',
+      },
+      {
+        name: '🖼️ Panels & Messages',
+        value:
+          '`/panel create|edit|list|delete|post|update|json|export` visual panel system [Admin]\n' +
+          '`/welcome add|remove|list` role-triggered welcome messages [Admin]\n' +
+          '`/send [channel]` send a message as the bot [Admin]',
+      },
+      {
+        name: '⚔️ Raids',
+        value:
+          '`/raidreward` reward commenters in raids >48h with 2 medium loot boxes & clean up [Admin]\n' +
+          '`!raidreminder [all|1|2|3|status]` trigger raid reminders manually\n' +
+          'Auto: 3 raid queues (EN/EN/PT), forum threads, reminders at 6am & 6pm JST',
+      },
+      {
+        name: '🧩 Challenge (Riddle)',
+        value:
+          '`!riddle` post the challenge • `!riddlereminder` schedule reminders\n' +
+          '`!riddlereset` reset progress • `!riddlestats` stats • `!riddleprogress [userID]` user attempts',
+      },
+      {
+        name: '🛠️ Utility',
+        value:
+          '`/archive` export channel messages to transcript [Mod]\n' +
+          '`/help` this guide • `!upload` file → permanent CDN link\n' +
+          '`!fetchimages [channelID] [botID]` download images • `!report [channelID] [24h|7d]` AI chat summary\n' +
+          '`!setup` interactive forum post builder',
+      },
+    )
+    .setFooter({ text: 'Reign of Titans • Mystic 2.0' });
+
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
+
+/**
  * /raidreward — reward every commenter in raids older than 48h with medium loot
  * boxes (2 per raid), log to the loot log channel, then delete the rewarded raids.
  */
@@ -2532,6 +2564,10 @@ const commands = [
     .setName('raidreward')
     .setDescription('Reward all commenters in raids older than 48h with 2 medium loot boxes, then delete the raids')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show all Mystic commands and what they do'),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -3576,6 +3612,11 @@ client.on('interactionCreate', async interaction => {
     // /raidreward - Reward raid commenters & clean up old raids
     else if (interaction.commandName === 'raidreward') {
       await handleRaidRewardCommand(interaction);
+    }
+
+    // /help - Command guide
+    else if (interaction.commandName === 'help') {
+      await handleHelpCommand(interaction);
     }
 
     // /archive - Channel archiving
